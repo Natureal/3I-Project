@@ -1,0 +1,244 @@
+#include "highgui.h"
+#include "cv.h"
+#include<math.h>
+#include<iostream>
+using namespace std;
+using namespace cv;
+const double PI = acos(-1.0);
+
+struct Gesture_judge{
+    inline void Draw_line(IplImage *graph,int row){
+        printf("drawline : %d\n",row);
+        int W = graph->width;
+        for(int j = 0; j < W; ++j){
+            cvSet2D(graph,row,j,Scalar(255,0,0));
+        }
+        row = row - 1;
+        if(row < 0) return;
+        for(int j = 0; j < W; ++j){
+            cvSet2D(graph,row,j,Scalar(255,0,0));
+        }
+    }
+
+    inline void Draw_point(IplImage *graph,int row,int col){
+        int W = graph->width;
+        int H = graph->height;
+        for(int i = -2; i <= 2; ++i)
+        for(int j= -2; j <= 2; ++j){
+            if(row + i < 0 || row + i >= H || col + j < 0 || col + j >= W) continue;
+            cvSet2D(graph,row + i,col + j,Scalar(0,0,255));
+        }
+    }
+
+    inline void Draw_center(IplImage *graph,int &row,int &col,int val){
+        CvPoint cen;
+        cen.x = row,cen.y = col;
+        CvScalar color;
+        color.val[0] = val;
+        cvCircle(graph,cen,10,color,2,8,0);
+    }
+
+    inline void Find_mid(IplImage *graph,int row,int &mid,int &left,int &right){
+        int W = graph->width;
+        const int cnt_part = 30;
+        int w_part = W / cnt_part;
+        int white_part[cnt_part + 5] = {0};
+        for(int i = 1; i <= cnt_part; ++i){
+            int t_right = i * w_part,cnt_white = 0;
+            for(int j = (i - 1) * w_part; j < t_right; ++j){
+                CvScalar tmp = cvGet2D(graph,row,j);
+                if(tmp.val[0] == 255) cnt_white++;
+            }
+            if(cnt_white > 0.9 * w_part) white_part[i] = 1;
+            else white_part[i] = 0;
+        }
+
+        int cur = 0,suc_max = 0,max_pos = -1;
+        for(int i = 1; i <= cnt_part; ++i){
+            if(white_part[i]) cur++;
+            else cur = 0;
+            if(cur > suc_max){
+                suc_max = cur;
+                max_pos = i;
+            }
+        }
+
+        left = w_part * (max_pos - suc_max);
+        right = w_part * (max_pos);
+        mid = left + (right - left) / 2;
+    }
+
+    void Find_line(IplImage *graph,int &top_x,int &max_x,int &bot_x,int &up_x){
+        top_x = max_x = bot_x = up_x = -1;
+        int white[10000] = {0},H = graph->height,W = graph->width;
+        int white_max = -1;
+        for(int i = 0; i < H; i+=3){
+            for(int j = 0; j < W; ++j){
+                CvScalar tmp = cvGet2D(graph,i,j);
+                if(tmp.val[0] == 255) white[i]++;
+            }
+            /*if(i < H - 6){
+                if(white[i] > (int)(W * 0.35)){
+                    bot_x = bot_x == -1 ? i : bot_x;
+                }
+            }*/
+            if(up_x == -1 && white[i] > W / 20) up_x = i;
+        }
+        for(int i = 0; i < H; i+=3){
+            if(white[i] > white_max){
+                white_max = white[i];
+                max_x = i;
+            }
+        }
+        for(int i = max_x; i < H; i+=3){
+            if(white[i] > (int)(white_max * 0.6)){
+                bot_x = i;
+            }
+        }
+        for(int i = max_x; i > 0; i-=3){
+            if(white[i] > (int)(white_max * 0.8)){
+                top_x = i;
+            }
+        }
+        //确定top线的x值
+        //top_x = max_x + 0.8 * (max_x - bot_x);
+    }
+
+    int Find_inter(IplImage *graph,IplImage *bgroud,CvPoint cen,int r){
+        int W = graph->width,H = graph->height;
+        const int cnt_part = 50;
+        int ang_part = 360 / cnt_part;
+        int white[cnt_part + 5] ={0};
+        for(int i = 1; i <= cnt_part; ++i){
+            int top = i * ang_part,cnt_white = 0;
+            for(int b = (i - 1) * ang_part; b < top; ++b){
+                int tx = abs(cen.x + r * cos(b * PI / 180));
+                int ty = abs(cen.y + r * sin(b * PI / 180));
+                if(tx < 0 || tx >= H || ty < 0 || ty >= W) continue;
+                if(b == (i - 1) * ang_part)
+                    cvLine(bgroud,cen,cvPoint(tx,ty),cvScalar(255,0,0));
+                CvScalar tmp = cvGet2D(graph,tx,ty);
+                if(tmp.val[0] == 255){
+                    cnt_white++;
+                }
+            }
+            //printf("cnt_white of %d : %d\n",i,cnt_white);
+            if(cnt_white >= 0.6 * ang_part) white[i] = 1;
+        }
+        for(int i = 1; i <= cnt_part; ++i){
+            cout << white[i] << " , ";
+        }
+        puts("");
+        return 0;
+    }
+
+    bool Solve(IplImage *graph,IplImage *bgroud,CvPoint & cen){
+        int top_x,top_y,top_left,top_right; //AB线
+        int max_x,max_y,max_left,max_right; //CD线
+        int bot_x,bot_y,bot_left,bot_right; //EF线
+        int up_x; //手掌顶部的y轴坐标
+        Find_line(graph,top_x,max_x,bot_x,up_x);
+        Find_mid(graph,top_x,top_y,top_left,top_right);
+        Find_mid(graph,max_x,max_y,max_left,max_right);
+        Find_mid(graph,bot_x,bot_y,bot_left,bot_right);
+
+        int cir_x,cir_y,cir_r = 0,tr,p1,p2,p3,p4,difx_1,dify_1,difx_2,dify_2;
+        difx_1 = top_x - max_x;
+        dify_1 = top_y - max_y;
+        difx_2 = max_x - bot_x;
+        dify_2 = max_y - bot_y;
+        for(int i = 1; i <= 1; ++i){
+            int tx = max_x + difx_1 / i;
+            int ty = max_y + dify_1 / i;
+            //Find_radius(graph,tx,ty,tr);
+            p1 = abs(up_x - tx); //center -> up
+            p2 = abs(tx - bot_x); //center -> bot
+            p3 = 1e9;//abs(tx - left_x); //center -> left
+            p4 = 1e9;//abs(right_x - tx); //center -> right
+            tr = min(p1,min(p2,min(p3,p4)));
+            if(tr > cir_r){
+                cir_r = tr;
+                cir_x = tx;
+                cir_y = ty;
+            }
+        }
+        for(int i = 1; i <= 1; ++i){
+            int tx = bot_x + difx_2 / i;
+            int ty = bot_y + dify_2 / i;
+            //Find_radius(graph,tx,ty,tr);
+            p1 = abs(up_x - tx); //center -> up
+            p2 = abs(tx - bot_x); //center -> bot
+            p3 = 1e9;//abs(tx - left_x); //center -> left
+            p4 = 1e9;//abs(right_x - tx); //center -> right
+            tr = min(p1,min(p2,min(p3,p4)));
+            if(tr > cir_r){
+                cir_r = tr;
+                cir_x = tx;
+                cir_y = ty;
+            }
+        }
+
+        cout << "cir_r : " << cir_x << " , " << cir_y << endl;
+
+        //cen.x = cir_x,cen.y = cir_y;
+        cen.x = (max_left + max_right) / 2;
+        cen.y = (bot_x + (up_x - bot_x) / 3);
+        Draw_center(graph,cen.x,cen.y,0);
+        CvScalar color;
+        color.val[0] = 0;
+        int cnt_inter = 0;
+        for(int i = 0; i <= 0; ++i){
+            cvCircle(graph,cen,cir_r * (1 + 0.1 * i),color,2,8,0);
+            cnt_inter = max(cnt_inter,Find_inter(graph,bgroud,cen,cir_r));
+        }
+
+        //draw angle line
+        CvPoint tar;
+        for(int i = 1; i < 12; ++i){
+            tar.x = cen.x - 2 * cir_r * cos(i * PI/12);
+            tar.y = cen.y - 2 * cir_r * sin(i * PI/12);
+            //cvLine(graph,cen,tar,cvScalar(0));
+        }
+
+        //debug draw line / mid point
+
+        Draw_line(bgroud,up_x);
+        Draw_line(bgroud,top_x);
+        Draw_line(bgroud,max_x);
+        Draw_line(bgroud,bot_x);
+
+        cout << "top_pos : " << top_x << " ; top_mid : " << top_y << endl;
+        cout << "max_pos : " << max_x << " ; max_mid : " << max_y << endl;
+        cout << "bot_pos : " << bot_x << " ; bot_mid : " << bot_y << endl;
+
+        Draw_point(bgroud,top_x,top_y);
+        Draw_point(bgroud,top_x,top_left);
+        Draw_point(bgroud,top_x,top_right);
+
+        Draw_point(bgroud,max_x,max_y);
+        Draw_point(bgroud,max_x,max_left);
+        Draw_point(bgroud,max_x,max_right);
+
+        Draw_point(bgroud,bot_x,bot_y);
+        Draw_point(bgroud,bot_x,bot_left);
+        Draw_point(bgroud,bot_x,bot_right);
+
+        //调用韬壕的函数
+
+        return res;
+        //debug
+    }
+
+}gesture_judge;
+
+int main(){
+    IplImage *img = cvLoadImage("15.png");
+
+    CvPoint cen;
+    bool judge = gesture_judge.Solve(img,cen);
+
+    cvShowImage("result1.png",img);
+    cvWaitKey(0);
+
+    return 0;
+}
