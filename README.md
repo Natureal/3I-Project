@@ -1,1 +1,3 @@
-# 3I-Project
+# 2014 3I-Project
+
+C++ OpenCV
